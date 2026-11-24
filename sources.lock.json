@@ -1,0 +1,19 @@
+{
+  "blackbox": {
+    "url": "https://github.com/fdavids77/BlackBoxReborn.git",
+    "commit": "fd0640919c7903a167abf0215ee68ebeaea53485",
+    "tag": "v2.1.0",
+    "licenseNote": "This repository distributes the complete corresponding source under GPL-3.0 (LICENSE and app/src/main/assets/bundle/GPL-3.0.txt). It retains the upstream BlackBoxReborn Apache-2.0 license (licenses/BlackBoxReborn-LICENSE.txt and app/src/main/assets/bundle/APACHE-2.0.txt) and the upstream README's GPL-3.0 declaration."
+  },
+  "dobby": {
+    "url": "https://github.com/jmpews/Dobby.git",
+    "commit": "b0176de574104726bb68dff3b77ee666300fc338",
+    "license": "Apache-2.0",
+    "pruned": "Removed unused Apple Darwin APSL 2.0 headers (builtin-plugin/SymbolResolver/macho/, external/logging/priv_headers/_simple.h) and upstream .vscode metadata for Android-only GPL-3.0 compatibility."
+  },
+  "microgReference": {
+    "url": "https://github.com/microg/GmsCore.git",
+    "commit": "f686900c68aa84d1605b52304f6615f3593c6f50",
+    "bundled": false
+  }
+}

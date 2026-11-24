@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- This variant is for direct installation. The legacy guest runtime targets API 28. -->
+    <issue id="ExpiredTargetSdkVersion" severity="informational" />
+</lint>

@@ -1,0 +1,753 @@
+package top.niunaijun.blackbox.fake.service;
+
+import android.content.ComponentName;
+import android.content.Intent;
+import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
+import android.content.pm.ResolveInfo;
+import android.content.pm.ServiceInfo;
+import android.os.Build;
+
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import black.android.app.BRActivityThread;
+import black.android.app.BRContextImpl;
+import black.android.content.pm.BRPackageManager;
+import top.niunaijun.blackbox.BlackBoxCore;
+import top.niunaijun.blackbox.app.BActivityThread;
+import top.niunaijun.blackbox.core.env.AppSystemEnv;
+import top.niunaijun.blackbox.fake.hook.BinderInvocationStub;
+import top.niunaijun.blackbox.fake.hook.MethodHook;
+import top.niunaijun.blackbox.fake.hook.ProxyMethod;
+import top.niunaijun.blackbox.fake.service.base.ValueMethodProxy;
+import top.niunaijun.blackbox.utils.MethodParameterUtils;
+import top.niunaijun.blackbox.utils.Reflector;
+import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.utils.compat.BuildCompat;
+import top.niunaijun.blackbox.utils.compat.ParceledListSliceCompat;
+
+
+public class IPackageManagerProxy extends BinderInvocationStub {
+    public static final String TAG = "PackageManagerStub";
+
+    public IPackageManagerProxy() {
+        super(BRActivityThread.get().sPackageManager().asBinder());
+    }
+
+    @Override
+    protected Object getWho() {
+        return BRActivityThread.get().sPackageManager();
+    }
+
+    @Override
+    protected void inject(Object baseInvocation, Object proxyInvocation) {
+        BRActivityThread.get()._set_sPackageManager(proxyInvocation);
+        replaceSystemService("package");
+        Object systemContext = BRActivityThread.get(BlackBoxCore.mainThread()).getSystemContext();
+        BRContextImpl.get(systemContext).getPackageManager();
+        PackageManager packageManager = BRContextImpl.get(systemContext).mPackageManager();
+        if (packageManager != null) {
+            BRPackageManager.get().disableApplicationInfoCache();
+            try {
+                Reflector.on("android.app.ApplicationPackageManager")
+                        .field("mPM")
+                        .set(packageManager, proxyInvocation);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public boolean isBadEnv() {
+        return false;
+    }
+
+    @Override
+    protected void onBindMethod() {
+        super.onBindMethod();
+        addMethodHook(new ValueMethodProxy("addOnPermissionsChangeListener", 0));
+        addMethodHook(new ValueMethodProxy("removeOnPermissionsChangeListener", 0));
+        addMethodHook(new SimpleAudioPermissionHook());
+        addMethodHook(new CheckSelfPermission());
+        addMethodHook(new ShouldShowRequestPermissionRationale());
+        addMethodHook(new RequestPermissions());
+        addMethodHook(new DisableIconLoading());
+        addMethodHook(new SetSplashScreenTheme());
+        addMethodHook(new XiaomiSecurityBypass());
+    }
+
+    @ProxyMethod("resolveIntent")
+    public static class ResolveIntent extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Intent intent = (Intent) args[0];
+            String resolvedType = (String) args[1];
+            int flags = MethodParameterUtils.toInt(args[2]);
+            ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveIntent(intent, resolvedType, flags, BlackBoxCore.getUserId());
+            if (resolveInfo != null) {
+                return resolveInfo;
+            }
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("queryIntentActivities")
+    public static class QueryIntentActivities extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Intent intent = (Intent) args[0];
+            Intent target = intent.getSelector() == null ? intent : intent.getSelector();
+            String packageName = target.getComponent() == null ? target.getPackage()
+                    : target.getComponent().getPackageName();
+            if (packageName == null || AppSystemEnv.isOpenPackage(packageName))
+                return method.invoke(who, args);
+            List<ResolveInfo> activities = BlackBoxCore.getBPackageManager().getService()
+                    .queryIntentActivities(target, MethodParameterUtils.toInt(args[2]),
+                            (String) args[1], BlackBoxCore.getUserId());
+            if (activities == null) activities = new ArrayList<>();
+            if (ParceledListSliceCompat.isReturnParceledListSlice(method))
+                return ParceledListSliceCompat.create(activities);
+            if (List.class.isAssignableFrom(method.getReturnType())) return activities;
+            throw new UnsupportedOperationException("Unsupported private activity list type");
+        }
+    }
+
+    @ProxyMethod("resolveService")
+    public static class ResolveService extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Intent intent = (Intent) args[0];
+            String resolvedType = (String) args[1];
+            int flags = MethodParameterUtils.toInt(args[2]);
+            ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, flags, resolvedType, BlackBoxCore.getUserId());
+            if (resolveInfo != null) {
+                return resolveInfo;
+            }
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("getApplicationEnabledSetting")
+    public static class GetApplicationEnabledSetting extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String packageName = (String) args[0];
+            if (AppSystemEnv.isOpenPackage(packageName)) return method.invoke(who, args);
+            ApplicationInfo info = BlackBoxCore.getBPackageManager().getService()
+                    .getApplicationInfo(packageName, 0, BlackBoxCore.getUserId());
+            if (info == null) throw new IllegalArgumentException("Unknown private application");
+            // Private apps currently retain the enabled value from their own manifest.
+            return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+        }
+    }
+
+    @ProxyMethod("setComponentEnabledSetting")
+    public static class SetComponentEnabledSetting extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            return 0;
+        }
+    }
+
+    @ProxyMethod("getPackageInfo")
+    public static class GetPackageInfo extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String packageName = (String) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            // Only explicitly shared system packages may resolve outside Cage.
+            // The upstream facade has host/fake fallbacks, so call the guest service directly.
+            if (AppSystemEnv.isOpenPackage(packageName)) return method.invoke(who, args);
+            PackageInfo info = BlackBoxCore.getBPackageManager().getService()
+                    .getPackageInfo(packageName, flags, BlackBoxCore.getUserId());
+            return io.github.flysky701.opencage.runtime.MicrogSignatureCompat.forGuest(info, flags);
+        }
+    }
+
+    @ProxyMethod("getPackageUid")
+    public static class GetPackageUid extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String packageName = (String) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            if (AppSystemEnv.isOpenPackage(packageName)) return method.invoke(who, args);
+            ApplicationInfo info = BlackBoxCore.getBPackageManager().getService()
+                    .getApplicationInfo(packageName, flags, BlackBoxCore.getUserId());
+            return info == null ? -1 : info.uid;
+        }
+    }
+
+    @ProxyMethod("getProviderInfo")
+    public static class GetProviderInfo extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            ComponentName componentName = (ComponentName) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            ProviderInfo providerInfo = BlackBoxCore.getBPackageManager().getProviderInfo(componentName, flags, BlackBoxCore.getUserId());
+            if (providerInfo != null)
+                return providerInfo;
+            if (AppSystemEnv.isOpenPackage(componentName)) {
+                return method.invoke(who, args);
+            }
+            return null;
+        }
+    }
+
+    @ProxyMethod("getReceiverInfo")
+    public static class GetReceiverInfo extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            ComponentName componentName = (ComponentName) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            ActivityInfo receiverInfo = BlackBoxCore.getBPackageManager().getReceiverInfo(componentName, flags, BlackBoxCore.getUserId());
+            if (receiverInfo != null)
+                return receiverInfo;
+            if (AppSystemEnv.isOpenPackage(componentName)) {
+                return method.invoke(who, args);
+            }
+            return null;
+        }
+    }
+
+    @ProxyMethod("getActivityInfo")
+    public static class GetActivityInfo extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            ComponentName componentName = (ComponentName) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            ActivityInfo activityInfo = BlackBoxCore.getBPackageManager().getActivityInfo(componentName, flags, BlackBoxCore.getUserId());
+            if (activityInfo != null)
+                return activityInfo;
+            if (AppSystemEnv.isOpenPackage(componentName)) {
+                return method.invoke(who, args);
+            }
+            return null;
+        }
+    }
+
+    @ProxyMethod("getServiceInfo")
+    public static class GetServiceInfo extends MethodHook {
+
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            ComponentName componentName = (ComponentName) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            ServiceInfo serviceInfo = BlackBoxCore.getBPackageManager().getServiceInfo(componentName, flags, BlackBoxCore.getUserId());
+            if (serviceInfo != null)
+                return serviceInfo;
+            if (AppSystemEnv.isOpenPackage(componentName)) {
+                return method.invoke(who, args);
+            }
+            return null;
+        }
+    }
+
+    @ProxyMethod("getInstalledApplications")
+    public static class GetInstalledApplications extends MethodHook {
+
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            // Fix 9: Android 17 (API 37) changed some IPackageManager list-returning
+            // methods away from ParceledListSlice (e.g. AppInfoList for this call).
+            // method.getReturnType() reflects the real, running OS's actual AIDL
+            // signature, so use that instead of hardcoding an SDK_INT check — if it
+            // no longer matches ParceledListSlice, let the real PM's Binder proxy
+            // marshal whatever type this OS now expects instead of wrapping our
+            // virtualized list in the (now wrong) type and hitting a ClassCastException.
+            if (!ParceledListSliceCompat.isReturnParceledListSlice(method)) {
+                return method.invoke(who, args);
+            }
+            int flags = MethodParameterUtils.toInt(args[0]);
+            List<ApplicationInfo> installedApplications = BlackBoxCore.getBPackageManager().getInstalledApplications(flags, BlackBoxCore.getUserId());
+            return ParceledListSliceCompat.create(installedApplications);
+        }
+    }
+
+    @ProxyMethod("getInstalledPackages")
+    public static class GetInstalledPackages extends MethodHook {
+
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            // Fix 9: Android 17 (API 37) changed IPackageManager.getInstalledPackages()
+            // to return PackageInfoList instead of ParceledListSlice. Wrapping our
+            // virtualized list in the old type threw:
+            //   ClassCastException: Couldn't convert result of type
+            //   android.content.pm.ParceledListSlice to android.content.pm.PackageInfoList
+            // on every Play Store launch. method.getReturnType() reflects the real,
+            // running OS's actual AIDL signature, so check that instead of hardcoding
+            // an SDK_INT branch — if it no longer matches ParceledListSlice, let the
+            // real PM's Binder proxy marshal whatever type this OS now expects.
+            if (!ParceledListSliceCompat.isReturnParceledListSlice(method)) {
+                return method.invoke(who, args);
+            }
+            int flags = MethodParameterUtils.toInt(args[0]);
+            List<PackageInfo> installedPackages = BlackBoxCore.getBPackageManager().getInstalledPackages(flags, BlackBoxCore.getUserId());
+            return ParceledListSliceCompat.create(installedPackages);
+        }
+    }
+
+    @ProxyMethod("getApplicationInfo")
+    public static class GetApplicationInfo extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String packageName = (String) args[0];
+
+            int flags = MethodParameterUtils.toInt(args[1]);
+
+
+
+            ApplicationInfo applicationInfo = BlackBoxCore.getBPackageManager().getService().getApplicationInfo(packageName, flags, BlackBoxCore.getUserId());
+            if (applicationInfo != null) {
+                return applicationInfo;
+            }
+            if (AppSystemEnv.isOpenPackage(packageName)) {
+                return method.invoke(who, args);
+            }
+            return null;
+        }
+    }
+
+    @ProxyMethod("queryContentProviders")
+    public static class QueryContentProviders extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            // Fix 9 (preventive, same pattern as getInstalledPackages — not confirmed
+            // to have crashed on device, but this method returns ParceledListSlice
+            // through the same reflection path, so it's exposed to the same API 37
+            // return-type migration risk).
+            if (!ParceledListSliceCompat.isReturnParceledListSlice(method)) {
+                return method.invoke(who, args);
+            }
+            int flags = MethodParameterUtils.toInt(args[2]);
+            List<ProviderInfo> providers = BlackBoxCore.getBPackageManager().
+                    queryContentProviders(BlackBoxCore.getAppProcessName(), BlackBoxCore.getBUid(), flags, BlackBoxCore.getUserId());
+            return ParceledListSliceCompat.create(providers);
+        }
+    }
+
+    @ProxyMethod("queryIntentReceivers")
+    public static class QueryBroadcastReceivers extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Intent intent = MethodParameterUtils.getFirstParam(args, Intent.class);
+            String type = MethodParameterUtils.getFirstParam(args, String.class);
+            Integer flags = MethodParameterUtils.getFirstParam(args, Integer.class);
+            List<ResolveInfo> resolves = BlackBoxCore.getBPackageManager().queryBroadcastReceivers(intent, flags, type, BActivityThread.getUserId());
+            Slog.d(TAG, "queryIntentReceivers: " + resolves);
+
+            if (BuildCompat.isN()) {
+                // Fix 9 (preventive, same pattern as getInstalledPackages): only wrap
+                // in ParceledListSlice if that's still what this OS's real
+                // queryIntentReceivers() actually returns.
+                if (!ParceledListSliceCompat.isReturnParceledListSlice(method)) {
+                    return method.invoke(who, args);
+                }
+                return ParceledListSliceCompat.create(resolves);
+            }
+
+
+            return resolves;
+        }
+    }
+
+    @ProxyMethod("resolveContentProvider")
+    public static class ResolveContentProvider extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String authority = (String) args[0];
+            int flags = MethodParameterUtils.toInt(args[1]);
+            ProviderInfo providerInfo = BlackBoxCore.getBPackageManager().resolveContentProvider(authority, flags, BActivityThread.getUserId());
+            if (providerInfo == null) {
+                return method.invoke(who, args);
+            }
+            return providerInfo;
+        }
+    }
+
+    @ProxyMethod("canRequestPackageInstalls")
+    public static class CanRequestPackageInstalls extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            MethodParameterUtils.replaceFirstAppPkg(args);
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("getPackagesForUid")
+    public static class GetPackagesForUid extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            int uid = (Integer) args[0];
+            if (uid == BlackBoxCore.getHostUid()) {
+                args[0] = BActivityThread.getBUid();
+                uid = (int) args[0];
+            }
+            String[] packagesForUid = BlackBoxCore.getBPackageManager().getPackagesForUid(uid);
+            Slog.d(TAG, args[0] + " , " + BActivityThread.getAppProcessName() + " GetPackagesForUid: " + Arrays.toString(packagesForUid));
+            return packagesForUid;
+        }
+    }
+
+    @top.niunaijun.blackbox.fake.hook.ProxyMethods({"getInstallerPackageName", "getInstallSourceInfo"})
+    public static class GetInstallerPackageName extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String packageName = (String) args[0];
+            if (AppSystemEnv.isOpenPackage(packageName)) return method.invoke(who, args);
+            int user = BlackBoxCore.getUserId();
+            if (args.length > 1 && ((Integer) args[1]) != user)
+                throw new SecurityException("Wrong private package user");
+            ApplicationInfo info = BlackBoxCore.getBPackageManager().getService()
+                    .getApplicationInfo(packageName, 0, user);
+            if (info == null) return null;
+            Object source = io.github.flysky701.opencage.space.GuestInstaller.querySource(method, args);
+            if (source != null || "getInstallerPackageName".equals(method.getName())) return source;
+            // Installed imports have unknown provenance, not a missing package or Play provenance.
+            return Class.forName("android.content.pm.InstallSourceInfo")
+                    .getConstructor(String.class, android.content.pm.SigningInfo.class, String.class, String.class)
+                    .newInstance(null, null, null, null);
+        }
+    }
+
+    @ProxyMethod("getPackageInstaller")
+    public static class GetPackageInstaller extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) {
+            return io.github.flysky701.opencage.space.GuestInstaller.get();
+        }
+    }
+
+    @ProxyMethod("getSharedLibraries")
+    public static class GetSharedLibraries extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            // Fix 9 (preventive, same pattern as getInstalledPackages — not confirmed
+            // to have crashed on device).
+            if (!ParceledListSliceCompat.isReturnParceledListSlice(method)) {
+                return method.invoke(who, args);
+            }
+            return ParceledListSliceCompat.create(new ArrayList<>());
+        }
+    }
+
+    @ProxyMethod("getComponentEnabledSetting")
+    public static class getComponentEnabledSetting extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            ComponentName componentName = (ComponentName) args[0];
+            String packageName = componentName.getPackageName();
+            ApplicationInfo applicationInfo = BlackBoxCore.getBPackageManager().getApplicationInfo(packageName,0, BActivityThread.getUserId());
+
+
+
+
+
+            if(applicationInfo != null){
+                return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+            }
+            if (AppSystemEnv.isOpenPackage(componentName)) {
+                return method.invoke(who, args);
+            }
+            throw new IllegalArgumentException();
+        }
+    }
+
+
+
+
+
+    @ProxyMethod("checkPermission")
+    public static class SimpleAudioPermissionHook extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String permission = (String) args[0];
+            String packageName = (String) args[1];
+            
+            
+            if (isAudioPermission(permission)) {
+                Slog.d(TAG, "SimpleAudioPermissionHook: Granting audio permission: " + permission + " to " + packageName);
+                return PackageManager.PERMISSION_GRANTED;
+            }
+
+            
+            if (isStorageOrMediaPermission(permission)) {
+                Slog.d(TAG, "SimpleAudioPermissionHook: Granting storage/media permission: " + permission + " to " + packageName);
+                return PackageManager.PERMISSION_GRANTED;
+            }
+            
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("checkSelfPermission")
+    public static class CheckSelfPermission extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String permission = (String) args[0];
+            String packageName = (String) args[1];
+            
+            
+            if (isAudioPermission(permission)) {
+                Slog.d(TAG, "CheckSelfPermission: Granting audio permission: " + permission + " to " + packageName);
+                return PackageManager.PERMISSION_GRANTED;
+            }
+
+            
+            if (isStorageOrMediaPermission(permission)) {
+                Slog.d(TAG, "CheckSelfPermission: Granting storage/media permission: " + permission + " to " + packageName);
+                return PackageManager.PERMISSION_GRANTED;
+            }
+            
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("shouldShowRequestPermissionRationale")
+    public static class ShouldShowRequestPermissionRationale extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String permission = (String) args[0];
+            String packageName = (String) args[1];
+            
+            
+            if (isAudioPermission(permission)) {
+                Slog.d(TAG, "ShouldShowRequestPermissionRationale: Not showing rationale for audio permission: " + permission);
+                return false;
+            }
+
+            
+            if (isStorageOrMediaPermission(permission)) {
+                Slog.d(TAG, "ShouldShowRequestPermissionRationale: Not showing rationale for storage/media permission: " + permission);
+                return false;
+            }
+            
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("requestPermissions")
+    public static class RequestPermissions extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String[] permissions = (String[]) args[0];
+            String packageName = (String) args[1];
+            
+            
+            
+            if (permissions != null) {
+                Slog.d(TAG, "RequestPermissions: Allowing permission request flow for: " + java.util.Arrays.toString(permissions));
+            }
+            
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("getDrawable")
+    public static class DisableIconLoading extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            
+            Slog.d(TAG, "Blocking icon loading to prevent resource errors");
+            return null; 
+        }
+    }
+
+    
+    private static boolean isStorageOrMediaPermission(String permission) {
+        if (permission == null) return false;
+        
+        if (permission.equals(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                || permission.equals(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            return true;
+        }
+        
+        if (permission.equals(android.Manifest.permission.READ_MEDIA_AUDIO)
+                || permission.equals(android.Manifest.permission.READ_MEDIA_VIDEO)
+                || permission.equals(android.Manifest.permission.READ_MEDIA_IMAGES)
+                || permission.equals("android.permission.READ_MEDIA_VISUAL")
+                || permission.equals("android.permission.READ_MEDIA_AURAL")
+                || permission.equals(android.Manifest.permission.ACCESS_MEDIA_LOCATION)) {
+            return true;
+        }
+        
+        if (permission.equals("android.permission.READ_MEDIA_AUDIO_USER_SELECTED")
+                || permission.equals("android.permission.READ_MEDIA_VIDEO_USER_SELECTED")
+                || permission.equals("android.permission.READ_MEDIA_IMAGES_USER_SELECTED")
+                || permission.equals("android.permission.READ_MEDIA_VISUAL_USER_SELECTED")
+                || permission.equals("android.permission.READ_MEDIA_AURAL_USER_SELECTED")) {
+            return true;
+        }
+        return false;
+    }
+
+    
+    private static boolean isAudioPermission(String permission) {
+        if (permission == null) return false;
+        return permission.equals(android.Manifest.permission.RECORD_AUDIO)
+                || permission.equals(android.Manifest.permission.CAPTURE_AUDIO_OUTPUT)
+                || permission.equals(android.Manifest.permission.MODIFY_AUDIO_SETTINGS)
+                || permission.equals("android.permission.FOREGROUND_SERVICE_MICROPHONE")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_CAMERA")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_LOCATION")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_HEALTH")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_DATA_SYNC")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_SPECIAL_USE")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_PHONE_CALL")
+                || permission.equals("android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE");
+    }
+
+    @ProxyMethod("setSplashScreenTheme")
+    public static class SetSplashScreenTheme extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            
+            
+            
+            String packageName = args.length > 0 ? (String) args[0] : "unknown";
+            Slog.d(TAG, "SetSplashScreenTheme: Bypassing UID check for package: " + packageName);
+            
+            
+            boolean isXiaomi = BuildCompat.isMIUI() || 
+                              Build.MANUFACTURER.toLowerCase().contains("xiaomi") ||
+                              Build.BRAND.toLowerCase().contains("xiaomi") ||
+                              Build.DISPLAY.toLowerCase().contains("hyperos");
+                              
+            if (isXiaomi) {
+                Slog.d(TAG, "SetSplashScreenTheme: Detected Xiaomi/HyperOS, using enhanced bypass");
+                
+                return null;
+            }
+            
+            
+            try {
+                return method.invoke(who, args);
+            } catch (SecurityException e) {
+                Slog.w(TAG, "SetSplashScreenTheme: SecurityException caught, bypassing: " + e.getMessage());
+                return null;
+            } catch (Exception e) {
+                
+                if (e.getCause() instanceof SecurityException) {
+                    Slog.w(TAG, "SetSplashScreenTheme: SecurityException (wrapped) caught, bypassing: " + e.getCause().getMessage());
+                    return null;
+                }
+                throw e; 
+            }
+        }
+    }
+
+    
+    public static class XiaomiSecurityBypass extends MethodHook {
+        private static final String[] XIAOMI_SECURITY_METHODS = {
+            "setApplicationEnabledSetting",
+            "setComponentEnabledSetting", 
+            "setInstallLocation",
+            "setInstallerPackageName",
+            "setPackageStoppedState",
+            "setSystemAppState",
+            "setApplicationCategoryHint",
+            "setApplicationHiddenSettingAsUser",
+            "setBlockUninstallForUser",
+            "setDefaultBrowserPackageNameAsUser",
+            "setDistractingPackageRestrictionsAsUser",
+            "setPackagesSuspendedAsUser",
+            "setUpdateAvailable",
+            "setRequiredForSystemUser",
+            "setSystemAppHiddenUntilInstalled",
+            "setHarmfulAppWarningEnabled",
+            "setKeepUninstalledPackages",
+            "verifyIntentFilter",
+            "verifyPendingInstall",
+            "extendVerificationTimeout",
+            "setDefaultHomeActivity",
+            "resetApplicationPreferences",
+            "clearApplicationProfileData",
+            "clearApplicationUserData",
+            "deleteApplicationCacheFiles",
+            "deleteApplicationCacheFilesAsUser",
+            "freeStorageAndNotify",
+            "freeStorage",
+            "movePackage",
+            "movePackageToSd",
+            "movePrimaryStorage"
+        };
+
+        @Override
+        public boolean isEnable() {
+            
+            return BuildCompat.isMIUI() || 
+                   Build.MANUFACTURER.toLowerCase().contains("xiaomi") ||
+                   Build.BRAND.toLowerCase().contains("xiaomi") ||
+                   Build.DISPLAY.toLowerCase().contains("hyperos");
+        }
+
+        @Override
+        public String getMethodName() {
+            return null; 
+        }
+
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String methodName = method.getName();
+            
+            
+            for (String securityMethod : XIAOMI_SECURITY_METHODS) {
+                if (securityMethod.equals(methodName)) {
+                    Slog.d(TAG, "XiaomiSecurityBypass: Intercepting " + methodName + " on Xiaomi/HyperOS");
+                    
+                    
+                    if (method.getReturnType() == void.class) {
+                        return null;
+                    }
+                    
+                    else if (method.getReturnType() == boolean.class) {
+                        return true;
+                    }
+                    
+                    else if (method.getReturnType() == int.class) {
+                        return 0;
+                    }
+                    
+                    else {
+                        return null;
+                    }
+                }
+            }
+            
+            
+            try {
+                return method.invoke(who, args);
+            } catch (SecurityException e) {
+                Slog.w(TAG, "XiaomiSecurityBypass: SecurityException in " + methodName + ", bypassing: " + e.getMessage());
+                
+                if (method.getReturnType() == boolean.class) {
+                    return false;
+                } else if (method.getReturnType() == int.class) {
+                    return -1;
+                } else {
+                    return null;
+                }
+            } catch (Exception e) {
+                if (e.getCause() instanceof SecurityException) {
+                    Slog.w(TAG, "XiaomiSecurityBypass: SecurityException (wrapped) in " + methodName + ", bypassing: " + e.getCause().getMessage());
+                    if (method.getReturnType() == boolean.class) {
+                        return false;
+                    } else if (method.getReturnType() == int.class) {
+                        return -1;
+                    } else {
+                        return null;
+                    }
+                }
+                throw e;
+            }
+        }
+    }
+}

@@ -1,0 +1,35 @@
+# Build output and local tool configuration
+build/
+*/build/
+.cxx/
+*/.cxx/
+.gradle/
+local.properties
+.idea/
+*.iml
+__pycache__/
+*.pyc
+*.log
+*.tmp
+
+# Packages, generated archives, and signing material
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Files staged by rebuild.py
+Bcore/src/main/cpp/Dobby/arm64-v8a/libdobby.a
+Bcore/src/main/assets/empty.jar
+app/src/main/jniLibs/
+Bcore/src/main/jniLibs/
+app/src/main/assets/cage-android/
+app/src/main/assets/cage-privacy/
+app/src/main/assets/cage-child/
+app/src/main/assets/bundle/*.apk
+app/src/main/java/io/github/flysky701/opencage/BuildInfo.java

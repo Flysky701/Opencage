@@ -1,0 +1,79 @@
+Open Cage 1.0.0-rc.3.18
+
+Claude-Cage 的原始首页框架与图标采用 MIT 许可（CAGE-MIT.txt）。
+Copyright (c) 2026 Sylvain Zimmer
+Copyright (c) 2026 Claude Cage contributors
+
+BlackBoxReborn v2.1.0
+fd0640919c7903a167abf0215ee68ebeaea53485
+https://github.com/fdavids77/BlackBoxReborn
+保留上游 Apache-2.0 许可证和 README 中的 GPL-3.0 声明。
+Open Cage 对宿主界面、来宾应用安装、Android 服务路由和账号集成作了修改，并以 GPL-3.0 分发完整对应源码。许可正文见 APACHE-2.0.txt 和 GPL-3.0.txt。
+BlackReflection 与其编译器来自同一锁定提交，沿用该源码树的许可声明。black-reflection/ 提供运行时反射支持，compiler/ 提供构建期注解处理器。
+
+Dobby（Apache-2.0）
+b0176de574104726bb68dff3b77ee666300fc338
+https://github.com/jmpews/Dobby
+rebuild.py 从锁定的 dobby/ 源码编译 ARM64 静态库 libdobby.a，编译时包含 TINYSTL 头文件。Bcore 将该静态库链接进 libblackbox.so 随最终 APK 分发。保留树已移除未用于 Android 构建的 Darwin APSL 2.0 文件与 .vscode 元数据，并保留 V8 semaphore.cc（Copyright 2013 the V8 project authors，BSD-3-Clause）。
+
+TINYSTL（BSD-2-Clause）
+
+Copyright 2012-2018 Matthew Endsley
+All rights reserved
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted providing that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+SandHook ElfImg（Apache-2.0）
+随 BlackBoxReborn Bcore 源码保留，为运行时提供 ELF 符号解析支持，见 Bcore/src/main/cpp/Utils/elf_util.{h,cpp}。
+
+microG Services v0.3.18.252432（Apache-2.0）
+Copyright the microG Project Team and contributors
+https://github.com/microg/GmsCore/releases/tag/v0.3.18.252432
+rebuild.py 按 bundle.lock.json 锁定 microG Services APK，使用缓存、上游下载或 --microg 指定的文件。核对 SHA-256 后将 com.google.android.gms-252432036.apk 原样复制到 assets/bundle/，保留上游签名。同一锁定文件中的 microG Companion 条目仅供参考。
+
+ByteHook 1.1.2（MIT）
+Copyright (c) 2020-2026 ByteDance, Inc.
+https://github.com/bytedance/bhook/tree/v1.1.2
+提供原生 PLT Hook。官方 com.bytedance:bytehook:1.1.2 AAR 提供 libbytehook.so。
+随附 BSD queue.h（Copyright (c) 1991, 1993 The Regents of the University of California）与 BSD linux_syscall_support.h（Copyright (c) 2005-2011 Google Inc.）。
+
+ShadowHook 2.0.1（MIT）
+Copyright (c) 2021-2026 ByteDance Inc.
+https://github.com/bytedance/android-inline-hook/tree/v2.0.1
+提供原生 Inline Hook。官方 com.bytedance.android:shadowhook:2.0.1 AAR 提供 libshadowhook.so 和 libshadowhook_nothing.so。
+
+默认构建或本地库缺失时，rebuild.py 使用缓存或从 Maven Central 下载两个官方 AAR，按 PRIVACY_AARS 校验 SHA-256，再提取并检查 ARM64 ELF 库。通过 --privacy-deps 提供的本地库按 PRIVACY_LIBS 校验 SHA-256，并检查 ARM64 ELF 架构。脚本将 ByteHook 和 ShadowHook 的完整附带声明复制到 assets/cage-privacy/THIRD-PARTY-NOTICES.txt。
+
+FreeReflection 3.2.2（MIT，FreeReflection-MIT.txt）
+Copyright (c) 2018 weishu
+https://github.com/tiann/FreeReflection
+Bcore 通过 com.github.tiann:FreeReflection:3.2.2 引入，用于隐藏 API 兼容。
+
+xDL（MIT，xDL-MIT.txt）
+Bcore 内置源码的声明为 Copyright (c) 2020-2024 HexHacking Team。
+ShadowHook 随附的 xDL 2.4.0 声明为 Copyright (c) 2020-2025 HexHacking Team。
+https://github.com/hexhacking/xDL
+
+HiddenApiBypass（Apache-2.0，LSPosed）
+根 build.gradle 保留上游版本引用 hiddenApiBypass = '4.3'，当前 Release 依赖声明未引用该属性。运行时由 Bcore 的 hidden_api.cpp 使用 SandHook::ElfImg 查找 ART 符号，原生路径失败时回退到 FreeReflection。
+
+本仓库及安装包均不分发 Google Play、Claude 等专有 APK。设备所有者自行获取并安装或导入。相关商标归各自权利人所有。
